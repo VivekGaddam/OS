@@ -1,0 +1,509 @@
+# ============================================================
+# 🧩 ONE-WAY PIPE (Parent → Child Communication)
+# ============================================================
+
+import os
+
+def main():
+    # Create pipe
+    r, w = os.pipe()
+    pid = os.fork()
+
+    if pid > 0:
+        # Parent process
+        os.close(r)
+        message = b"Hello from parent through pipe!"
+        os.write(w, message)
+        os.close(w)
+    else:
+        # Child process
+        os.close(w)
+        rfd = os.fdopen(r)
+        message = rfd.read()
+        print("Child received:", message)
+        rfd.close()
+
+if __name__ == "__main__":
+    main()
+
+
+# ============================================================
+# 🔁 TWO-WAY PIPE (Parent ↔ Child Communication via FIFO)
+# ============================================================
+
+import os
+import sys
+
+fifo1 = "fifo1"   # parent → child
+fifo2 = "fifo2"   # child → parent
+
+# Create FIFOs if they don't exist
+for fifo in (fifo1, fifo2):
+    if not os.path.exists(fifo):
+        os.mkfifo(fifo)
+
+pid = os.fork()
+
+if pid > 0:
+    # ---------------- Parent Process ----------------
+    with open(fifo1, "w") as f:
+        f.write("Hello Child, this is Parent!\n")
+
+    # Read reply from child
+    with open(fifo2, "r") as f:
+        reply = f.readline().strip()
+        print("Parent received:", reply)
+
+    os.wait()  # Wait for child
+else:
+    # ---------------- Child Process ----------------
+    # Read message from parent
+    with open(fifo1, "r") as f:
+        message = f.readline().strip()
+        print("Child received:", message)
+
+    # Send reply to parent
+    with open(fifo2, "w") as f:
+        f.write("Hello Parent, this is Child!\n")
+
+
+# ============================================================
+# 💾 SHARED MEMORY
+# ============================================================
+
+from multiprocessing import Process, Value, Array
+import time
+
+# Function to increment a shared value
+def increment(shared_val, n):
+    for _ in range(n):
+        shared_val.value += 1
+
+# Function to modify a shared array
+def modify_array(shared_arr, n):
+    for i in range(len(shared_arr)):
+        shared_arr[i] += n
+
+if __name__ == "__main__":
+    # Shared memory objects
+    counter = Value('i', 0)  # 'i' means integer type
+    arr = Array('i', [1, 2, 3, 4, 5])
+
+    # Creating processes
+    p1 = Process(target=increment, args=(counter, 1000))
+    p2 = Process(target=increment, args=(counter, 1000))
+    p3 = Process(target=modify_array, args=(arr, 10))
+
+    # Starting processes
+    p1.start()
+    p2.start()
+    p3.start()
+
+    # Waiting for processes to finish
+    p1.join()
+    p2.join()
+    p3.join()
+
+    # Display shared memory results
+    print(f"Shared counter = {counter.value}")
+    print(f"Shared array = {list(arr)}")
+
+
+# ============================================================
+# 🧵 PRODUCER-CONSUMER USING THREADING
+# ============================================================
+
+import threading
+import queue
+import time
+import random
+
+BUFFER_SIZE = 5
+q = queue.Queue(maxsize=BUFFER_SIZE)
+
+def producer():
+    while True:
+        item = random.randint(1, 100)
+        q.put(item)
+        print(f"[Producer] Produced: {item} | Buffer size: {q.qsize()}")
+        time.sleep(random.uniform(0.5, 1.5))
+
+def consumer():
+    while True:
+        item = q.get()
+        print(f"[Consumer] Consumed: {item} | Buffer size: {q.qsize()}")
+        time.sleep(random.uniform(0.5, 2.0))
+        q.task_done()
+
+if __name__ == "__main__":
+    t1 = threading.Thread(target=producer)
+    t2 = threading.Thread(target=consumer)
+
+    t1.daemon = True
+    t2.daemon = True
+
+    t1.start()
+    t2.start()
+
+    time.sleep(10)
+    print("\nExperiment finished. Exiting program...")
+
+
+# ============================================================
+# 🧮 PRODUCER-CONSUMER USING MULTIPROCESSING + SEMAPHORES
+# ============================================================
+
+from multiprocessing import Process, Semaphore, Value
+import time
+import random
+
+# Shared resources
+shared_counter = Value('i', 0)
+mutex = Semaphore(1)
+items = Semaphore(0)
+spaces = Semaphore(5)  # buffer size = 5
+
+def producer(pid):
+    for i in range(5):
+        spaces.acquire()
+        mutex.acquire()
+        shared_counter.value += 1
+        print(f"[Producer {pid}] produced item. Counter = {shared_counter.value}")
+        mutex.release()
+        items.release()
+        time.sleep(random.uniform(0.5, 1.5))
+
+def consumer(cid):
+    for i in range(5):
+        items.acquire()
+        mutex.acquire()
+        shared_counter.value -= 1
+        print(f"[Consumer {cid}] consumed item. Counter = {shared_counter.value}")
+        mutex.release()
+        spaces.release()
+        time.sleep(random.uniform(0.5, 1.5))
+
+if __name__ == "__main__":
+    producers = [Process(target=producer, args=(i,)) for i in range(2)]
+    consumers = [Process(target=consumer, args=(i,)) for i in range(2)]
+
+    for p in producers: p.start()
+    for c in consumers: c.start()
+
+    for p in producers: p.join()
+    for c in consumers: c.join()
+
+    print("Semaphore-based Producer-Consumer finished.")
+
+
+# ============================================================
+# 💽 FILE ALLOCATION METHODS (Contiguous, Linked, Indexed)
+# ============================================================
+
+class ContiguousAllocation:
+    def __init__(self, size):
+        self.disk = [0] * size 
+
+    def allocate(self, file_name, start, length):
+        if any(self.disk[start:start+length]):
+            print(f"❌ Cannot allocate {file_name}: blocks not free")
+            return
+        for i in range(start, start + length):
+            self.disk[i] = 1
+        print(f"✅ {file_name} allocated from block {start} to {start+length-1}")
+
+    def display(self):
+        print("Disk blocks:", self.disk)
+
+
+class LinkedAllocation:
+    def __init__(self, size):
+        self.disk = [None] * size  
+        self.files = {}
+
+    def allocate(self, file_name, blocks):
+        if any(self.disk[b] is not None for b in blocks):
+            print(f"❌ Cannot allocate {file_name}: some blocks already used")
+            return
+        for i in range(len(blocks) - 1):
+            self.disk[blocks[i]] = blocks[i + 1]
+        self.disk[blocks[-1]] = -1
+        self.files[file_name] = blocks[0]
+        print(f"✅ {file_name} allocated at blocks {blocks}")
+
+    def display(self):
+        for f, start in self.files.items():
+            chain = []
+            while start != -1:
+                chain.append(start)
+                start = self.disk[start]
+            print(f"{f}: {' -> '.join(map(str, chain))}")
+
+
+class IndexedAllocation:
+    def __init__(self, size):
+        self.disk = [0] * size
+        self.index_blocks = {}
+
+    def allocate(self, file_name, index_block, data_blocks):
+        if self.disk[index_block] == 1 or any(self.disk[b] == 1 for b in data_blocks):
+            print(f"❌ Cannot allocate {file_name}: blocks not free")
+            return
+        self.disk[index_block] = 1
+        for b in data_blocks:
+            self.disk[b] = 1
+        self.index_blocks[file_name] = (index_block, data_blocks)
+        print(f"✅ {file_name} allocated with index block {index_block} -> {data_blocks}")
+
+    def display(self):
+        for f, (index, blocks) in self.index_blocks.items():
+            print(f"{f}: Index Block {index} -> Data Blocks {blocks}")
+
+
+if __name__ == "__main__":
+    print("=== Contiguous Allocation ===")
+    contig = ContiguousAllocation(20)
+    contig.allocate("File1", 2, 5)
+    contig.allocate("File2", 8, 4)
+    contig.display()
+
+    print("\n=== Linked Allocation ===")
+    linked = LinkedAllocation(20)
+    linked.allocate("FileA", [0, 5, 9, 13])
+    linked.allocate("FileB", [2, 6, 10])
+    linked.display()
+
+    print("\n=== Indexed Allocation ===")
+    indexed = IndexedAllocation(20)
+    indexed.allocate("FileX", 4, [7, 8, 9])
+    indexed.allocate("FileY", 11, [12, 13])
+    indexed.display()
+
+
+# ============================================================
+# 🍴 DINING PHILOSOPHERS PROBLEM
+# ============================================================
+
+import threading
+import time
+from threading import Semaphore
+
+N = 5
+fork = [Semaphore(1) for _ in range(N)]
+waiter = Semaphore(N - 1)
+
+def philosopher(id):
+    for i in range(3):
+        print(f"Philosopher {id} is thinking")
+        time.sleep(1)
+
+        waiter.acquire()
+        fork[id].acquire()
+        fork[(id + 1) % N].acquire()
+
+        print(f"Philosopher {id} is eating (Round {i+1})")
+        time.sleep(2)
+
+        fork[id].release()
+        fork[(id + 1) % N].release()
+        waiter.release()
+
+        print(f"Philosopher {id} finished eating Round {i+1} and put down the forks")
+
+    print(f"Philosopher {id} has finished all rounds and leaves the table.")
+
+threads = []
+for i in range(N):
+    t = threading.Thread(target=philosopher, args=(i,))
+    threads.append(t)
+    t.start()
+
+for t in threads:
+    t.join()
+
+print("\n🍽️ Dining Philosophers Simulation Finished.")
+
+
+# ============================================================
+# 💰 BANKER'S ALGORITHM - DEADLOCK AVOIDANCE
+# ============================================================
+
+def banker_algorithm():
+    n = 5
+    r = 3
+
+    alloc = [
+        [0, 1, 0],
+        [2, 0, 0],
+        [3, 0, 2],
+        [2, 1, 1],
+        [0, 0, 2]
+    ]
+
+    maxm = [
+        [7, 5, 3],
+        [3, 2, 2],
+        [9, 0, 2],
+        [2, 2, 2],
+        [4, 3, 3]
+    ]
+
+    avail = [3, 3, 2]
+
+    need = [[maxm[i][j] - alloc[i][j] for j in range(r)] for i in range(n)]
+
+    print("PROCESS\t ALLOCATION\t MAX\t\t NEED")
+    for i in range(n):
+        print(f"P{i}\t {alloc[i]}\t {maxm[i]}\t {need[i]}")
+
+    print(f"\nInitial Available Resources: {avail}\n")
+
+    f = [0] * n
+    ans = [0] * n
+    ind = 0
+
+    for _ in range(n):
+        for i in range(n):
+            if f[i] == 0:
+                if all(need[i][j] <= avail[j] for j in range(r)):
+                    ans[ind] = i
+                    ind += 1
+                    for y in range(r):
+                        avail[y] += alloc[i][y]
+                    f[i] = 1
+                    print(f"Process P{i} is executing... Updated Available = {avail}")
+
+    print("\nThe SAFE Sequence is as follows:")
+    safe = all(f)
+    if safe:
+        print(" -> ".join([f"P{ans[i]}" for i in range(n)]))
+    else:
+        print("System is in UNSAFE state (Deadlock possible).")
+
+    print(f"\nFinal Available Resources: {avail}")
+
+
+if __name__ == "__main__":
+    banker_algorithm()
+
+
+# ============================================================
+# ⚙️ PETERSON'S ALGORITHM
+# ============================================================
+
+import threading
+import time
+
+N = 2
+flag = [False] * N
+turn = 0
+
+def process(id):
+    global turn
+    other = 1 - id
+
+    for _ in range(3):
+        flag[id] = True
+        turn = other
+        while flag[other] and turn == other:
+            pass
+        print(f'Process {id} is in the critical section')
+        time.sleep(1)
+        flag[id] = False
+        print(f'Process {id} is in the remainder section')
+        time.sleep(1)
+
+if __name__ == '__main__':
+    t1 = threading.Thread(target=process, args=(0,))
+    t2 = threading.Thread(target=process, args=(1,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+
+# ============================================================
+# 📄 PAGE REPLACEMENT ALGORITHMS (FIFO, LRU, OPTIMAL)
+# ============================================================
+
+def fifo(pages, capacity):
+    print("\n--- FIFO Page Replacement ---")
+    frame = []
+    faults = 0
+
+    for page in pages:
+        if page not in frame:
+            if len(frame) < capacity:
+                frame.append(page)
+            else:
+                frame.pop(0)
+                frame.append(page)
+            faults += 1
+        print(f"Page: {page} -> Frames: {frame}")
+
+    print(f"Total Page Faults (FIFO): {faults}")
+
+
+def lru(pages, capacity):
+    print("\n--- LRU Page Replacement ---")
+    frame = []
+    recent = {}
+    faults = 0
+    time = 0
+
+    for page in pages:
+        time += 1
+        if page not in frame:
+            if len(frame) < capacity:
+                frame.append(page)
+            else:
+                lru_page = min(frame, key=lambda p: recent.get(p, 0))
+                frame.remove(lru_page)
+                frame.append(page)
+            faults += 1
+        recent[page] = time
+        print(f"Page: {page} -> Frames: {frame}")
+
+    print(f"Total Page Faults (LRU): {faults}")
+
+
+def optimal(pages, capacity):
+    print("\n--- Optimal Page Replacement ---")
+    frame = []
+    faults = 0
+
+    for i in range(len(pages)):
+        page = pages[i]
+        if page not in frame:
+            if len(frame) < capacity:
+                frame.append(page)
+            else:
+                future = pages[i + 1:]
+                farthest = -1
+                replace_index = -1
+                for f in frame:
+                    if f not in future:
+                        replace_index = frame.index(f)
+                        break
+                    else:
+                        next_use = future.index(f)
+                        if next_use > farthest:
+                            farthest = next_use
+                            replace_index = frame.index(f)
+                frame[replace_index] = page
+            faults += 1
+        print(f"Page: {page} -> Frames: {frame}")
+
+    print(f"Total Page Faults (Optimal): {faults}")
+
+
+if __name__ == "__main__":
+    pages = [7, 0, 1, 2, 0, 3, 0, 4, 2, 3, 0, 3, 2]
+    capacity = 3
+
+    print("Reference String:", pages)
+    print("Frame Capacity:", capacity)
+
+    fifo(pages, capacity)
+    lru(pages, capacity)
+    optimal(pages, capacity)
